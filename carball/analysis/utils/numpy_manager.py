@@ -28,10 +28,7 @@ def convert_numpy_array(numpy_array: np.ndarray):
     :return: A BytesIO object that contains compressed bytes
     """
     compressed_array = io.BytesIO()  # np.savez_compressed() requires a file-like object to write to
-    save_kwargs = {"allow_pickle": True}
-    if "fix_imports" in inspect.signature(np.save).parameters:
-        save_kwargs["fix_imports"] = False
-    np.save(compressed_array, numpy_array, **save_kwargs)
+    np.save(compressed_array, numpy_array, allow_pickle=True)
     return compressed_array
 
 
@@ -60,7 +57,7 @@ def get_array(file, chunk):
         load_kwargs["fix_imports"] = False
     try:
         # explicitly allow pickle loading. thanks numpy for changing this without telling anyone
-        result = np.load(fake_file, **load_kwargs)
+        result = np.load(fake_file, allow_pickle=True)
     except OSError:
         raise EOFError('NumPy parsing error')
     return result, starting_byte
