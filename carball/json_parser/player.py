@@ -59,6 +59,25 @@ class Player:
             return None
         return online_id
 
+    def _normalize_unique_id_for_platform(self, platform, unique_id, player_name, np_id_handle=None):
+        if unique_id is None or platform is None:
+            return unique_id
+
+        unique_id_str = str(unique_id)
+        if platform == "OnlinePlatform_PS4" and np_id_handle not in (None, "", "0"):
+            return np_id_handle
+
+        if platform == "OnlinePlatform_Xbox" and unique_id_str.isdigit():
+            try:
+                return int(unique_id_str).to_bytes(8, "little").hex()
+            except OverflowError:
+                logger.error(
+                    "XUID too large to convert to 8-byte hex: player=%s unique_id=%s",
+                    player_name,
+                    unique_id_str,
+                )
+        return unique_id
+
     def _get_unique_id_and_platform_from_actor(self, actor_data: dict):
         unique_id = None
         platform = None
@@ -96,6 +115,11 @@ class Player:
                 unique_id,
             )
         if unique_id is not None and platform is not None:
+            unique_id = self._normalize_unique_id_for_platform(
+                platform,
+                unique_id,
+                actor_data.get("name"),
+            )
             unique_id_str = str(unique_id)
             if platform == "OnlinePlatform_PS4":
                 # PSN IDs are the account name; numeric IDs are not useful for downstream systems.
@@ -107,18 +131,6 @@ class Player:
                     else:
                         logger.error(
                             "PSN numeric UniqueId without player name: player=%s unique_id=%s",
-                            actor_data.get("name"),
-                            unique_id_str,
-                        )
-            if platform == "OnlinePlatform_Xbox":
-                # Normalize XUIDs to little-endian 8-byte hex to match common ecosystem IDs.
-                if unique_id_str.isdigit():
-                    try:
-                        unique_id_str = int(unique_id_str).to_bytes(8, "little").hex()
-                        unique_id = unique_id_str
-                    except OverflowError:
-                        logger.error(
-                            "XUID too large to convert to 8-byte hex: player=%s unique_id=%s",
                             actor_data.get("name"),
                             unique_id_str,
                         )
@@ -171,7 +183,6 @@ class Player:
 
     def parse_player_stats(self, player_stats: dict):
         self.name = player_stats["Name"]
-        self.online_id = None
         self.is_orange = bool(player_stats["Team"])
         self.score = player_stats["Score"]
         self.goals = player_stats["Goals"]
@@ -181,6 +192,9 @@ class Player:
         self.is_bot = player_stats["bBot"]
         self.platform = player_stats["Platform"]["value"]
         self.platform_source = "player_stats"
+        self.online_id, stats_platform = self._get_player_id_from_player_stats(player_stats)
+        if stats_platform is not None:
+            self.platform = stats_platform
 
         logger.debug("Created Player from stats: %s", self)
         if self.is_bot:
@@ -193,24 +207,57 @@ class Player:
             )
             self.online_id = get_online_id_for_bot(bot_map, self)
             self.id_source = "bot"
+        elif self.online_id is not None:
+            self.id_source = "player_stats"
 
         return self
 
     def _get_player_id_from_player_stats(self, player_stats: dict):
         player_id = player_stats.get("PlayerID") or {}
         fields = player_id.get("fields") or {}
-        platform_map = {
-            "EpicAccountId": "OnlinePlatform_Epic",
-            "SteamID": "OnlinePlatform_Steam",
-            "XUID": "OnlinePlatform_Xbox",
-            "PS4": "OnlinePlatform_PS4",
-            "PSN": "OnlinePlatform_PS4",
-        }
-        for key in ("EpicAccountId", "SteamID", "XUID", "PS4", "PSN"):
-            value = fields.get(key)
-            if value:
-                return value, platform_map.get(key)
-        return None, None
+        platform = (
+            fields.get("Platform", {}).get("value")
+            or player_stats.get("Platform", {}).get("value")
+        )
+        np_id_handle = (
+            fields.get("NpId", {})
+            .get("fields", {})
+            .get("Handle", {})
+            .get("fields", {})
+            .get("Data")
+        )
+
+        candidates = []
+        if platform == "OnlinePlatform_Epic":
+            candidates.append(fields.get("EpicAccountId"))
+        elif platform == "OnlinePlatform_Steam":
+            candidates.extend([fields.get("SteamID"), fields.get("Uid"), player_stats.get("OnlineID")])
+        elif platform == "OnlinePlatform_Xbox":
+            candidates.extend([fields.get("XUID"), fields.get("Uid"), player_stats.get("OnlineID")])
+        elif platform == "OnlinePlatform_PS4":
+            candidates.extend([fields.get("PS4"), fields.get("PSN"), fields.get("Uid"), player_stats.get("OnlineID")])
+        else:
+            candidates.extend([
+                fields.get("EpicAccountId"),
+                fields.get("SteamID"),
+                fields.get("XUID"),
+                fields.get("PS4"),
+                fields.get("PSN"),
+                fields.get("Uid"),
+                player_stats.get("OnlineID"),
+            ])
+
+        unique_id = next((value for value in candidates if value not in (None, "", "0", 0)), None)
+        if unique_id is None and np_id_handle not in (None, "", "0"):
+            unique_id = np_id_handle
+
+        unique_id = self._normalize_unique_id_for_platform(
+            platform,
+            unique_id,
+            player_stats.get("Name"),
+            np_id_handle=np_id_handle,
+        )
+        return unique_id, platform
 
     def get_camera_settings(self, camera_data: dict):
         self.camera_settings["field_of_view"] = camera_data.get("fov", None)
