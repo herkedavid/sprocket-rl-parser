@@ -22,3 +22,6 @@ ReplaySaver.dll
 Parser format.png
 
 *DS_Store*
+
+*.so
+*_rustc
