@@ -1,4 +1,5 @@
 import gzip
+import inspect
 import io
 import struct
 import numpy as np
@@ -51,6 +52,9 @@ def get_array(file, chunk):
         raise EOFError('Struct error')
     numpy_bytes = file.read(starting_byte)
     fake_file = io.BytesIO(numpy_bytes)
+    load_kwargs = {"allow_pickle": True}
+    if "fix_imports" in inspect.signature(np.load).parameters:
+        load_kwargs["fix_imports"] = False
     try:
         # explicitly allow pickle loading. thanks numpy for changing this without telling anyone
         result = np.load(fake_file, allow_pickle=True)
