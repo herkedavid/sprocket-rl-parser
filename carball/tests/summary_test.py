@@ -15,6 +15,40 @@ def get_modern_replay_path() -> str:
     )
 
 
+def get_identity_parity_replay_paths():
+    root = Path(__file__).resolve().parents[2]
+    return [
+        root / "test-files/psn-ids/2026-01-31.12.57 DubiousDugger Private Win 2026-01-31-12-57.replay",
+        root / "test-files/xbox-ids/172a7141a9c2aae47f3111149ef66951a9ea5631b2750a164696fde1e9a65a50.replay",
+        root / "carball/tests/replays/crossplatform_party.replay",
+        root / "carball/tests/replays/PLAY_STATION_ONLY_PARTY.replay",
+    ]
+
+
+def get_player_identity_map(game_json):
+    return {
+        player["name"]: {
+            "id": player.get("id", {}).get("id"),
+            "platform": player.get("platform"),
+        }
+        for player in game_json.get("players", [])
+    }
+
+
+def get_team_identity_map(game_json):
+    return {
+        team.get("isOrange"): sorted(player_id.get("id") for player_id in team.get("playerIds", []))
+        for team in game_json.get("teams", [])
+    }
+
+
+def get_goal_scorer_ids(game_json):
+    return [
+        goal.get("playerId", {}).get("id")
+        for goal in game_json.get("gameMetadata", {}).get("goals", [])
+    ]
+
+
 def test_decompile_replay_header_only_skips_network_frames():
     replay_json = carball.decompile_replay_header_only(get_modern_replay_path())
     assert replay_json.get("network_frames") is None
@@ -59,3 +93,13 @@ def test_analyze_replay_file_requires_network_frames(monkeypatch):
 
     with pytest.raises(ValueError, match="summarize_replay_file"):
         analyze_replay_file(get_modern_replay_path())
+
+
+@pytest.mark.parametrize("replay_path", get_identity_parity_replay_paths())
+def test_summary_identity_matches_full_analysis_when_playerstats_exist(replay_path):
+    summary_json = carball.summarize_replay_file(str(replay_path)).get_json_data()
+    full_json = carball.analyze_replay_file(str(replay_path)).get_json_data()
+
+    assert get_player_identity_map(summary_json) == get_player_identity_map(full_json)
+    assert get_team_identity_map(summary_json) == get_team_identity_map(full_json)
+    assert get_goal_scorer_ids(summary_json) == get_goal_scorer_ids(full_json)
