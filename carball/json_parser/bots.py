@@ -62,11 +62,13 @@ logger = logging.getLogger(__name__)
 
 
 def h11(w):
+    if isinstance(w, str):
+        w = w.encode("utf-8")
     return hashlib.md5(w).hexdigest()[:9]
 
 
 def get_bot_map():
-    result = dict()
+    result = {}
     for i in range(len(bots)):
         result[bots[i]] = i + 1
     return result
@@ -74,8 +76,16 @@ def get_bot_map():
 
 def get_online_id_for_bot(bot_map, player):
     logger.warning("Generating bot id for player flagged as bot: name=%s", player.name)
+
     try:
-        return 'b' + str(bot_map[player.name]) + 'b'
-    except:
-        logger.error('Found bot not in bot list; refusing to hash name for id. bot_name=%s', player.name)
-        raise ValueError(f"Bot name not in bot list: {player.name}")
+        return "b" + str(bot_map[player.name]) + "b"
+    except Exception:
+        logger.warning(
+            "Unknown bot name encountered, using fallback bot id instead of failing. bot_name=%s",
+            player.name
+        )
+
+        raw_name = str(player.name or "unknown_bot").strip().lower()
+        fallback_hash = hashlib.sha1(raw_name.encode("utf-8")).hexdigest()[:12]
+
+        return f"fallback_bot_{fallback_hash}"
